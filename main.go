@@ -76,7 +76,6 @@ func resolver(subdomain string) bool {
 }
 
 func main() {
-	// insertData()
 	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017")
 	client, err := mongo.Connect(context.Background(), clientOptions)
 	if err != nil {
@@ -84,46 +83,59 @@ func main() {
 	}
 	defer client.Disconnect(context.Background())
 
-	// Access a collection
 	collection := client.Database("testdb").Collection("subdomains")
 
-	// fetch subdomains
-	fmt.Println("Fetching subdomains ...")
-	subdomainsUrl := "https://h3llfir3.xyz/domains.txt"
-	subdomains, err := getSubdomains(subdomainsUrl)
+	subdomainsURL := "https://h3llfir3.xyz/domains.txt"
+	subdomains, err := getSubdomains(subdomainsURL)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	var documents []interface{}
+
 	for _, subdomain := range subdomains {
-		if subdomain != "" {
-			fmt.Println("Processing subdomain: ", subdomain)
+		subdomain = strings.TrimSpace(subdomain)
+		if subdomain == "" {
+			continue
+		}
 
-			amassData, err := amass(subdomain)
-			if err != nil {
-				log.Println("Amass: ", err)
+		fmt.Println("Processing subdomain:", subdomain)
+
+		amassData, err := amass(subdomain)
+		if err != nil {
+			log.Println("Amass:", err)
+		}
+
+		subfinderData, err := subfinder(subdomain)
+		if err != nil {
+			log.Println("Subfinder:", err)
+		}
+
+		combinedData := amassData + subfinderData
+		subdomains := strings.Split(combinedData, "\n")
+
+		for _, subdomain := range subdomains {
+			subdomain = strings.TrimSpace(subdomain)
+			if subdomain == "" {
+				continue
 			}
 
-			subfinderData, err := subfinder(subdomain)
-			if err != nil {
-				log.Println("Subfinder:", err)
+			data := Subdomain{
+				URL:      subdomain,
+				Resolved: resolver(subdomain),
 			}
-			combinedData := amassData + subfinderData
 
-			subdomains := strings.Split(combinedData, "\n")
-			for _, subdomain := range subdomains {
-				if subdomain != "" {
-					data := Subdomain{
-						URL:      subdomain,
-						Resolved: resolver(subdomain),
-					}
+			documents = append(documents, data)
+		}
+	}
 
-					_, err := collection.InsertOne(context.Background(), data)
-					if err != nil {
-						log.Fatal(err)
-					}
-				}
-			}
+	// Insert all documents at once
+	if len(documents) > 0 {
+		insertResult, err := collection.InsertMany(context.Background(), documents)
+		if err != nil {
+			log.Println("MongoDB InsertMany:", err)
+		} else {
+			fmt.Println("Inserted", len(insertResult.InsertedIDs), "documents")
 		}
 	}
 }
