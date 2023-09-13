@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/projectdiscovery/dnsx/libs/dnsx"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -39,6 +40,27 @@ func getSubdomains(url string) ([]string, error) {
 
 	bodyStr := string(body)
 	subdomains := strings.Fields(bodyStr)
+	return subdomains, nil
+}
+
+func getAllRecords(collection *mongo.Collection) ([]Subdomain, error) {
+
+	var subdomains []Subdomain
+
+	cursor, err := collection.Find(context.Background(), bson.M{})
+	if err != nil {
+		return nil, err
+	}
+
+	defer cursor.Close(context.Background())
+
+	for cursor.Next(context.Background()) {
+		var subdomain Subdomain
+		if err := cursor.Decode(&subdomain); err != nil {
+			return nil, err
+		}
+		subdomains = append(subdomains, subdomain)
+	}
 	return subdomains, nil
 }
 
@@ -93,6 +115,16 @@ func main() {
 
 	var documents []interface{}
 
+	existingRecords, err := getAllRecords(collection)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	existingURLs := make(map[string]bool)
+	for _, record := range existingRecords {
+		existingURLs[record.URL] = true
+	}
+
 	for _, subdomain := range subdomains {
 		subdomain = strings.TrimSpace(subdomain)
 		if subdomain == "" {
@@ -120,12 +152,17 @@ func main() {
 				continue
 			}
 
-			data := Subdomain{
-				URL:      subdomain,
-				Resolved: resolver(subdomain),
-			}
+			if !existingURLs[subdomain] {
+				data := Subdomain{
+					URL:      subdomain,
+					Resolved: resolver(subdomain),
+				}
 
-			documents = append(documents, data)
+				documents = append(documents, data)
+				existingURLs[subdomain] = true
+
+				fmt.Println("Inserted subdomain:", subdomain)
+			}
 		}
 	}
 
